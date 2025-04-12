@@ -93,25 +93,41 @@ async def handle_any_section(message: types.Message, state: FSMContext):
     section_name = section_mapping[message.text]
     text = load_section_text(section_name)
     await message.answer(text, reply_markup=get_section_keyboard(section_name))
-
+    
 @dp.callback_query(F.data.startswith("schedule_"))
 async def show_schedule(callback: types.CallbackQuery, state: FSMContext):
     section_name = callback.data[len("schedule_"):].strip()
     schedules = get_schedules(section_name)
     
     if not schedules:
-        await callback.message.answer("Расписания пока не добавлены.")
-        await callback.answer()
+        await callback.answer("Расписания пока не добавлены.")
         return
     
-    # Инициализируем state с явным указанием всех необходимых полей
+    # Удаляем предыдущее сообщение с расписанием, если есть
+    try:
+        data = await state.get_data()
+        if "last_schedule_message_id" in data:
+            await bot.delete_message(
+                chat_id=callback.message.chat.id,
+                message_id=data["last_schedule_message_id"]
+            )
+    except:
+        pass
+    
+    # Отправляем новое сообщение
+    new_message = await callback.message.answer(
+        "Загружаю расписание...",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Загрузка...", callback_data="loading")]])
+    )
+    
     await state.set_data({
         "current_index": 0,
         "schedules": schedules,
-        "section_name": section_name
+        "section_name": section_name,
+        "last_schedule_message_id": new_message.message_id
     })
     
-    await _show_current_schedule(callback.message, state)
+    await _show_current_schedule(new_message, state)
     await callback.answer()
 
 async def _show_current_schedule(message: types.Message, state: FSMContext):
@@ -138,23 +154,23 @@ async def _show_current_schedule(message: types.Message, state: FSMContext):
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     
-    if isinstance(message, types.Message):
-        await message.answer(
-            f"📅 Расписание ({current_index + 1}/{total}):\n\n{schedule_text}",
-            reply_markup=keyboard
-        )
-    else:
+    # Всегда редактируем сообщение, если это возможно
+    try:
         await message.edit_text(
             f"📅 Расписание ({current_index + 1}/{total}):\n\n{schedule_text}",
             reply_markup=keyboard
         )
-
+    except:
+        # Если редактирование невозможно (новое сообщение), создаем новое
+        await message.answer(
+            f"📅 Расписание ({current_index + 1}/{total}):\n\n{schedule_text}",
+            reply_markup=keyboard
+        )
+        
 @dp.callback_query(F.data.startswith("nav_"))
 async def navigate_schedules(callback: types.CallbackQuery, state: FSMContext):
-    # Получаем данные из state или инициализируем их, если их нет
     data = await state.get_data()
     
-    # Инициализируем необходимые переменные, если их нет в state
     if "current_index" not in data:
         data["current_index"] = 0
     if "schedules" not in data:
@@ -172,7 +188,6 @@ async def navigate_schedules(callback: types.CallbackQuery, state: FSMContext):
     section_name = data["section_name"]
     total = len(schedules)
     
-    # Определяем действие (prev/next)
     action = callback.data.split("_")[1]
     
     if action == "prev":
@@ -183,17 +198,33 @@ async def navigate_schedules(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         return
     
-    # Обновляем state
+    # Удаляем предыдущее сообщение с расписанием
+    try:
+        if "last_schedule_message_id" in data:
+            await bot.delete_message(
+                chat_id=callback.message.chat.id,
+                message_id=data["last_schedule_message_id"]
+            )
+    except:
+        pass
+    
     await state.update_data(current_index=new_index)
     
+    # Отправляем новое сообщение и сохраняем его ID
+    new_message = await callback.message.answer(
+        "Загружаю расписание...",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Загрузка...", callback_data="loading")]])
+    )
+    
+    await state.update_data(last_schedule_message_id=new_message.message_id)
+    
     # Показываем текущее расписание
-    await _show_current_schedule(callback.message, state)
+    await _show_current_schedule(new_message, state)
     await callback.answer()
 
 async def _show_current_schedule(message: types.Message, state: FSMContext):
     data = await state.get_data()
     
-    # Инициализируем переменные, если их нет
     if "current_index" not in data:
         data["current_index"] = 0
     if "schedules" not in data:
@@ -225,16 +256,11 @@ async def _show_current_schedule(message: types.Message, state: FSMContext):
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     
-    if isinstance(message, types.Message):
-        await message.answer(
-            f"📅 Расписание ({current_index + 1}/{total}):\n\n{schedule_text}",
-            reply_markup=keyboard
-        )
-    else:
-        await message.edit_text(
-            f"📅 Расписание ({current_index + 1}/{total}):\n\n{schedule_text}",
-            reply_markup=keyboard
-        )
+    # Всегда редактируем сообщение
+    await message.edit_text(
+        f"📅 Расписание ({current_index + 1}/{total}):\n\n{schedule_text}",
+        reply_markup=keyboard
+    )
 
 @dp.callback_query(F.data.startswith("view_details_"))
 async def show_details(callback: types.CallbackQuery, state: FSMContext):
@@ -265,8 +291,6 @@ async def show_details(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "back_to_schedule")
 async def back_to_schedule(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    
-    # Получаем сохраненные данные
     section_name = data.get("section_name", "")
     schedules = data.get("schedules", [])
     current_index = data.get("current_index", 0)
@@ -275,7 +299,6 @@ async def back_to_schedule(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Ошибка: данные расписания не найдены")
         return
     
-    # Находим текущий индекс расписания
     schedule_id = data.get("current_schedule_id")
     if schedule_id:
         for i, (s_id, _, _) in enumerate(schedules):
@@ -283,11 +306,38 @@ async def back_to_schedule(callback: types.CallbackQuery, state: FSMContext):
                 current_index = i
                 break
     
-    # Обновляем state
+    # Удаляем сообщение с подробностями
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    
     await state.update_data(current_index=current_index)
     
-    # Показываем текущее расписание
-    await _show_current_schedule(callback.message, state)
+    # Получаем или создаем новое сообщение для расписания
+    if "last_schedule_message_id" in data:
+        try:
+            msg = await bot.edit_message_text(
+                chat_id=callback.message.chat.id,
+                message_id=data["last_schedule_message_id"],
+                text="Загружаю расписание..."
+            )
+            await _show_current_schedule(msg, state)
+        except:
+            new_message = await callback.message.answer(
+                "Загружаю расписание...",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Загрузка...", callback_data="loading")]])
+            )
+            await state.update_data(last_schedule_message_id=new_message.message_id)
+            await _show_current_schedule(new_message, state)
+    else:
+        new_message = await callback.message.answer(
+            "Загружаю расписание...",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Загрузка...", callback_data="loading")]])
+        )
+        await state.update_data(last_schedule_message_id=new_message.message_id)
+        await _show_current_schedule(new_message, state)
+    
     await callback.answer()
 
 @dp.callback_query(F.data.startswith("nav_back_"))
