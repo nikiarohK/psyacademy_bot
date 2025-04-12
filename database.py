@@ -8,7 +8,7 @@ def create_tables():
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS schedules (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        section_name TEXT NOT NULL,
+        section_name TEXT NOT NULL UNIQUE,
         schedule_text TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
@@ -20,36 +20,30 @@ def create_tables():
 def add_schedule(section_name: str, schedule_text: str):
     conn = sqlite3.connect(DATABASE_NAME)
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO schedules (section_name, schedule_text) VALUES (?, ?)', 
-                   (section_name, schedule_text))
+    cursor.execute('''
+        INSERT OR REPLACE INTO schedules (section_name, schedule_text)
+        VALUES (?, ?)
+    ''', (section_name, schedule_text))
     conn.commit()
     conn.close()
 
-def get_schedules_count(section_name: str) -> int:
+def get_latest_schedule(section_name: str) -> str:
     conn = sqlite3.connect(DATABASE_NAME)
     cursor = conn.cursor()
-    cursor.execute('SELECT COUNT(*) FROM schedules WHERE section_name = ?', (section_name,))
-    result = cursor.fetchone()[0]
-    conn.close()
-    return result
-
-def get_schedules_page(section_name: str, page: int, per_page: int = 1):
-    conn = sqlite3.connect(DATABASE_NAME)
-    cursor = conn.cursor()
-    cursor.execute(
-        'SELECT id, schedule_text FROM schedules WHERE section_name = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
-        (section_name, per_page, (page - 1) * per_page)
-    )
+    cursor.execute('''
+        SELECT schedule_text FROM schedules 
+        WHERE section_name = ?
+        LIMIT 1
+    ''', (section_name,))
     result = cursor.fetchone()
     conn.close()
-    return result if result else (None, None)
+    return result[0] if result else None
 
-def delete_schedule(schedule_id: int):
+def delete_schedule(section_name: str):
     conn = sqlite3.connect(DATABASE_NAME)
     cursor = conn.cursor()
-    cursor.execute('DELETE FROM schedules WHERE id = ?', (schedule_id,))
+    cursor.execute('DELETE FROM schedules WHERE section_name = ?', (section_name,))
     conn.commit()
     conn.close()
 
-# Инициализация БД при импорте
 create_tables()

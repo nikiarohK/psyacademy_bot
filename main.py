@@ -12,7 +12,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from config import BOT_TOKEN
 import os
-from database import get_schedules_count, get_schedules_page
+from database import get_latest_schedule  # Измененный импорт
 from admin import admin_router
 
 bot = Bot(token=BOT_TOKEN)
@@ -95,49 +95,16 @@ async def handle_any_section(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("schedule_"))
 async def show_schedule(callback: types.CallbackQuery):
-    section_name = callback.data.split("_")[1]
-    print(f"Запрошено расписание для раздела: {section_name}")  # Отладочный вывод
+    section_name = callback.data[callback.data.find("_") + 1::].strip()
+    print(section_name)
+    # Получаем последнее добавленное расписание
+    schedule_text = get_latest_schedule(section_name)
     
-    total_schedules = get_schedules_count(section_name)
-    print(f"Найдено записей: {total_schedules}")  # Отладочный вывод
-    
-    if total_schedules == 0:
+    if not schedule_text:
         await callback.message.answer("Расписание пока не добавлено.")
-        await callback.answer()
-        return
+    else:
+        await callback.message.answer(f"📅 Актуальное расписание:\n\n{schedule_text}")
     
-    await show_schedule_page(callback.message, section_name, 1)
-    await callback.answer()
-
-async def show_schedule_page(message: types.Message, section_name: str, page: int):
-    total_schedules = get_schedules_count(section_name)
-    _, schedule_text = get_schedules_page(section_name, page)
-    
-    keyboard = []
-    
-    if page > 1:
-        keyboard.append(InlineKeyboardButton(
-            text="⬅️ Назад",
-            callback_data=f"schedule_page:{section_name}:{page-1}"
-        ))
-    
-    if page < total_schedules:
-        keyboard.append(InlineKeyboardButton(
-            text="Вперед ➡️",
-            callback_data=f"schedule_page:{section_name}:{page+1}"
-        ))
-    
-    reply_markup = InlineKeyboardMarkup(inline_keyboard=[keyboard]) if keyboard else None
-    
-    await message.edit_text(
-        f"📅 Расписание ({page}/{total_schedules}):\n\n{schedule_text}",
-        reply_markup=reply_markup
-    )
-
-@dp.callback_query(F.data.startswith("schedule_page:"))
-async def handle_schedule_page(callback: types.CallbackQuery):
-    _, section_name, page_str = callback.data.split(":")
-    await show_schedule_page(callback.message, section_name, int(page_str))
     await callback.answer()
 
 async def main():
